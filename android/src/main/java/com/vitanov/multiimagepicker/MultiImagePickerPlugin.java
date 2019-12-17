@@ -20,6 +20,9 @@ import androidx.annotation.NonNull;
 import androidx.core.content.ContextCompat;
 import androidx.exifinterface.media.ExifInterface;
 
+import com.bumptech.glide.Glide;
+import com.bumptech.glide.gifdecoder.GifDecoder;
+import com.bumptech.glide.load.resource.gif.ByteBufferGifDecoder;
 import com.sangcomz.fishbun.FishBun;
 import com.sangcomz.fishbun.FishBunCreator;
 import com.sangcomz.fishbun.adapter.image.impl.GlideAdapter;
@@ -35,6 +38,23 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+
+import java.util.Locale;
+
+import android.Manifest;
+import android.os.AsyncTask;
+import android.os.Build;
+import android.provider.OpenableColumns;
+import android.os.Environment;
+import android.provider.MediaStore;
+
+import androidx.annotation.NonNull;
+import androidx.exifinterface.media.ExifInterface;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
+import android.text.TextUtils;
+import android.util.Log;
+
 
 import io.flutter.embedding.engine.plugins.FlutterPlugin;
 import io.flutter.embedding.engine.plugins.activity.ActivityAware;
@@ -63,6 +83,7 @@ public class MultiImagePickerPlugin implements
     private static final String REQUEST_THUMBNAIL = "requestThumbnail";
     private static final String REQUEST_ORIGINAL = "requestOriginal";
     private static final String REQUEST_METADATA = "requestMetadata";
+    private static final String REQUEST_GIF = "requestGif";
     private static final String PICK_IMAGES = "pickImages";
     private static final String MAX_IMAGES = "maxImages";
     private static final String SELECTED_ASSETS = "selectedAssets";
@@ -167,7 +188,13 @@ public class MultiImagePickerPlugin implements
                 if (bitmap == null) return null;
 
                 ByteArrayOutputStream bitmapStream = new ByteArrayOutputStream();
-                bitmap.compress(Bitmap.CompressFormat.JPEG, this.quality, bitmapStream);
+                final boolean _success = bitmap.compress(Bitmap.CompressFormat.JPEG, this.quality, bitmapStream);
+                if ( !_success ) {
+                    bitmapStream.reset();
+                    Bitmap cloneBitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight());
+                    cloneBitmap.compress(Bitmap.CompressFormat.PNG, 100, bitmapStream);
+                    cloneBitmap.recycle();
+                }
                 byteArray = bitmapStream.toByteArray();
                 bitmap.recycle();
                 bitmapStream.close();
@@ -225,7 +252,13 @@ public class MultiImagePickerPlugin implements
                 if (bitmap == null) return null;
 
                 ByteArrayOutputStream bitmapStream = new ByteArrayOutputStream();
-                bitmap.compress(Bitmap.CompressFormat.JPEG, this.quality, bitmapStream);
+                final boolean _success = bitmap.compress(Bitmap.CompressFormat.JPEG, this.quality, bitmapStream);
+                if ( !_success ) {
+                    bitmapStream.reset();
+                    Bitmap cloneBitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight());
+                    cloneBitmap.compress(Bitmap.CompressFormat.PNG, 100, bitmapStream);
+                    cloneBitmap.recycle();
+                }
                 bytesArray = bitmapStream.toByteArray();
                 bitmap.recycle();
                 bitmapStream.close();
@@ -251,6 +284,60 @@ public class MultiImagePickerPlugin implements
             }
         }
     }
+
+
+    private static class GetGifTask extends AsyncTask<String, Void, ByteBuffer> {
+        private final WeakReference<Activity> activityReference;
+
+        final BinaryMessenger messenger;
+        final String identifier;
+
+        GetGifTask(Activity context, BinaryMessenger messenger, String identifier) {
+            super();
+            this.messenger = messenger;
+            this.identifier = identifier;
+            this.activityReference = new WeakReference<>(context);
+        }
+
+        @Override
+        protected ByteBuffer doInBackground(String... strings) {
+            final Uri uri = Uri.parse(this.identifier);
+            byte[] bytesArray = null;
+            byte[] data = new byte[4096];
+            int length = 0;
+
+            try {
+                // get a reference to the activity if it is still there
+                Activity activity = activityReference.get();
+                if (activity == null || activity.isFinishing()) return null;
+
+                ByteArrayOutputStream bitmapStream = new ByteArrayOutputStream();
+                InputStream gifInputStream = activity.getContentResolver().openInputStream(uri);
+
+                while ((length = gifInputStream.read(data)) != -1) {
+                    bitmapStream.write(data, 0, length);
+                }
+                bytesArray = bitmapStream.toByteArray();
+                gifInputStream.close();
+                bitmapStream.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+
+            assert bytesArray != null;
+            final ByteBuffer buffer = ByteBuffer.allocateDirect(bytesArray.length);
+            buffer.put(bytesArray);
+            return buffer;
+        }
+
+        @Override
+        protected void onPostExecute(ByteBuffer buffer) {
+            super.onPostExecute(buffer);
+            this.messenger.send("multi_image_picker/image/" + this.identifier + ".gif", buffer);
+            buffer.clear();
+        }
+    }
+
 
     @Override
     public void onMethodCall(final MethodCall call, final Result result) {
@@ -310,7 +397,17 @@ public class MultiImagePickerPlugin implements
                 finishWithError("Exif error", e.toString());
             }
 
-        } else {
+        } else if (REQUEST_GIF.equals(call.method)) {
+            final String identifier = call.argument("identifier");
+
+            if (!this.uriExists(identifier)) {
+                finishWithError("ASSET_DOES_NOT_EXIST", "The requested image does not exist.");
+            } else {
+                GetGifTask task = new GetGifTask(this.activity, this.messenger, identifier);
+                task.execute();
+                finishWithSuccess();
+            }
+        }else {
             pendingResult.notImplemented();
             clearMethodCallAndResult();
         }
@@ -547,7 +644,7 @@ public class MultiImagePickerPlugin implements
                 .setCamera(enableCamera)
                 .setRequestCode(REQUEST_CODE_CHOOSE)
                 .setSelectedImages(selectedUris)
-                .exceptGif(true)
+                .exceptGif(false)
                 .setIsUseDetailView(useDetailsView.equals("true"))
                 .setReachLimitAutomaticClose(autoCloseOnSelectionLimit.equals("true"))
                 .isStartInAllView(startInAllView.equals("true"));
