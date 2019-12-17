@@ -235,6 +235,39 @@ public class SwiftMultiImagePickerPlugin: NSObject, FlutterPlugin {
                 self.readPhotosMetadata(result: assets, operationQueue: operationQueue, callback: result)
             }
             break;
+        case "requestGif":
+            let arguments = call.arguments as! Dictionary<String, AnyObject>
+            let identifier = arguments["identifier"] as! String
+            let manager = PHImageManager.default()
+            let options = PHImageRequestOptions()
+
+            options.deliveryMode = PHImageRequestOptionsDeliveryMode.highQualityFormat
+            options.isSynchronous = false
+            options.isNetworkAccessAllowed = true
+            options.version = .original
+
+            let assets: PHFetchResult = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil)
+
+            if (assets.count > 0) {
+                let asset: PHAsset = assets[0];
+
+                let ID: PHImageRequestID = manager.requestImageData(
+                    for: asset,
+                    options: options,
+                    resultHandler: {
+                        (data: Data?, type: String?, orientation: UIImage.Orientation, options: [AnyHashable: Any]?) in
+                        self.messenger.send(
+                            onChannel: "multi_image_picker/image/" + identifier + ".gif",
+                            message: data
+                        );
+                })
+
+                if(PHInvalidImageRequestID != ID) {
+                    return result(true);
+                }
+            }
+            
+            return result(FlutterError(code: "ASSET_DOES_NOT_EXIST", message: "The requested image does not exist.", details: nil))
         default:
             result(FlutterMethodNotImplemented)
         }

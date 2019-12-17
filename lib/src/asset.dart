@@ -32,6 +32,8 @@ class Asset {
 
   String get _originalChannel => '$_channel.original';
 
+  String get _gifChannel => '$_channel.gif';
+
   /// Returns the original image width
   int get originalWidth {
     return _originalWidth;
@@ -131,6 +133,20 @@ class Asset {
     });
 
     await MultiImagePicker.requestOriginal(_identifier, quality);
+    return completer.future;
+  }
+
+  Future<ByteData> getGifByteData() async {
+    Completer completer = new Completer<ByteData>();
+    ServicesBinding.instance.defaultBinaryMessenger
+        .setMessageHandler(_gifChannel, (ByteData message) async {
+      completer.complete(message);
+      ServicesBinding.instance.defaultBinaryMessenger
+          .setMessageHandler(_gifChannel, null);
+      return message;
+    });
+
+    await MultiImagePicker.requestGif(_identifier);
     return completer.future;
   }
 

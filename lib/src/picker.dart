@@ -153,6 +153,23 @@ class MultiImagePicker {
     }
   }
 
+  static Future<bool> requestGif(String identifier) async {
+    try {
+      bool ret =
+      await _channel.invokeMethod("requestGif", <String, dynamic>{
+        "identifier": identifier,
+      });
+      return ret;
+    } on PlatformException catch (e) {
+      switch (e.code) {
+        case "ASSET_DOES_NOT_EXIST":
+          throw AssetNotFoundException(e.message);
+        default:
+          throw e;
+      }
+    }
+  }
+
   // Requests image metadata for a given [identifier]
   static Future<Metadata> requestMetadata(String identifier) async {
     Map<dynamic, dynamic> map = await _channel.invokeMethod(
