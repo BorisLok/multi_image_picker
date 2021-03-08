@@ -55,7 +55,6 @@ import androidx.core.content.ContextCompat;
 import android.text.TextUtils;
 import android.util.Log;
 
-
 import io.flutter.embedding.engine.plugins.FlutterPlugin;
 import io.flutter.embedding.engine.plugins.activity.ActivityAware;
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding;
@@ -338,6 +337,57 @@ public class MultiImagePickerPlugin implements
         }
     }
 
+    private static class GetGifTask extends AsyncTask<String, Void, ByteBuffer> {
+        private final WeakReference<Activity> activityReference;
+
+        final BinaryMessenger messenger;
+        final String identifier;
+
+        GetGifTask(Activity context, BinaryMessenger messenger, String identifier) {
+            super();
+            this.messenger = messenger;
+            this.identifier = identifier;
+            this.activityReference = new WeakReference<>(context);
+        }
+
+        @Override
+        protected ByteBuffer doInBackground(String... strings) {
+            final Uri uri = Uri.parse(this.identifier);
+            byte[] bytesArray = null;
+            byte[] data = new byte[4096];
+            int length = 0;
+
+            try {
+                // get a reference to the activity if it is still there
+                Activity activity = activityReference.get();
+                if (activity == null || activity.isFinishing()) return null;
+
+                ByteArrayOutputStream bitmapStream = new ByteArrayOutputStream();
+                InputStream gifInputStream = activity.getContentResolver().openInputStream(uri);
+
+                while ((length = gifInputStream.read(data)) != -1) {
+                    bitmapStream.write(data, 0, length);
+                }
+                bytesArray = bitmapStream.toByteArray();
+                gifInputStream.close();
+                bitmapStream.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+
+            assert bytesArray != null;
+            final ByteBuffer buffer = ByteBuffer.allocateDirect(bytesArray.length);
+            buffer.put(bytesArray);
+            return buffer;
+        }
+
+        @Override
+        protected void onPostExecute(ByteBuffer buffer) {
+            super.onPostExecute(buffer);
+            this.messenger.send("multi_image_picker/image/" + this.identifier + ".gif", buffer);
+            buffer.clear();
+        }
+    }
 
     @Override
     public void onMethodCall(final MethodCall call, final Result result) {
