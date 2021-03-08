@@ -11,7 +11,7 @@ extension PHAsset {
         
         if #available(iOS 9.0, *) {
             let resources = PHAssetResource.assetResources(for: self)
-            if let resource = resources.first {
+            if let resource = resources.last {
                 fname = resource.originalFilename
             }
         }
@@ -25,15 +25,22 @@ extension PHAsset {
     }
 }
 
+fileprivate extension UIViewController {
+    class func topViewController(base: UIViewController? = UIApplication.shared.keyWindow?.rootViewController) -> UIViewController? {
+        if let presented = base?.presentedViewController {
+            return topViewController(base: presented)
+        }
+        return base
+    }
+}
+
 public class SwiftMultiImagePickerPlugin: NSObject, FlutterPlugin {
-    var controller: UIViewController!
     var imagesResult: FlutterResult?
     var messenger: FlutterBinaryMessenger;
 
     let genericError = "500"
 
-    init(cont: UIViewController, messenger: FlutterBinaryMessenger) {
-        self.controller = cont;
+    init(messenger: FlutterBinaryMessenger) {
         self.messenger = messenger;
         super.init();
     }
@@ -41,19 +48,7 @@ public class SwiftMultiImagePickerPlugin: NSObject, FlutterPlugin {
     public static func register(with registrar: FlutterPluginRegistrar) {
         let channel = FlutterMethodChannel(name: "multi_image_picker", binaryMessenger: registrar.messenger())
 
-        let app =  UIApplication.shared
-        let rootController = app.delegate!.window!!.rootViewController
-        var flutterController: FlutterViewController? = nil
-        if rootController is FlutterViewController {
-            flutterController = rootController as! FlutterViewController
-        } else if app.delegate is FlutterAppDelegate {
-            if (app.delegate?.responds(to: Selector("flutterEngine")))! {
-                let engine: FlutterEngine? = app.delegate?.perform(Selector("flutterEngine"))?.takeRetainedValue() as! FlutterEngine
-                flutterController = engine?.viewController
-            }
-        }
-        let controller : UIViewController = flutterController ?? rootController!;
-        let instance = SwiftMultiImagePickerPlugin.init(cont: controller, messenger: registrar.messenger())
+        let instance = SwiftMultiImagePickerPlugin.init(messenger: registrar.messenger())
         registrar.addMethodCallDelegate(instance, channel: channel)
     }
 
@@ -66,75 +61,77 @@ public class SwiftMultiImagePickerPlugin: NSObject, FlutterPlugin {
                 return result(FlutterError(code: "PERMISSION_PERMANENTLY_DENIED", message: "The user has denied the gallery access.", details: nil))
             }
             
-            let vc = BSImagePickerViewController()
+            
             let arguments = call.arguments as! Dictionary<String, AnyObject>
             let maxImages = arguments["maxImages"] as! Int
-            let enableCamera = arguments["enableCamera"] as! Bool
             let options = arguments["iosOptions"] as! Dictionary<String, String>
-            let selectedAssets = arguments["selectedAssets"] as! Array<String>
+            let selectedAssetIds = arguments["selectedAssets"] as! Array<String>
             var totalImagesSelected = 0
             
-            vc.maxNumberOfSelections = maxImages
+            
+            var selectedAssets = [PHAsset]()
+            
+        
+            if selectedAssetIds.count > 0 {
+                let options = PHFetchOptions()
+                 if #available(iOS 9.1, *) {
+                    let imagesPredicate = NSPredicate(format: "mediaType = %d", PHAssetMediaType.image.rawValue)
+                    let liveImagesPredicate = NSPredicate(format: "(mediaSubtype & %d) != 0", PHAssetMediaSubtype.photoLive.rawValue)
+                    let compound = NSCompoundPredicate(orPredicateWithSubpredicates: [imagesPredicate, liveImagesPredicate])
+                    options.predicate = compound
+                }
 
-            if (enableCamera) {
-                vc.takePhotos = true
+                let assets: PHFetchResult = PHAsset.fetchAssets(withLocalIdentifiers: selectedAssetIds, options: options)
+                assets.enumerateObjects({ (asset, idx, stop) -> Void in
+                    selectedAssets.append(asset)
+                })
             }
             
-            if selectedAssets.count > 0 {
-                let assets: PHFetchResult = PHAsset.fetchAssets(withLocalIdentifiers: selectedAssets, options: nil)
-                vc.defaultSelections = assets
+            
+            let imagePicker = ImagePickerController(selectedAssets: selectedAssets)
+            
+            if #available(iOS 13.0, *) {
+                // Disables iOS 13 swipe to dismiss - to force user to press cancel or done.
+                imagePicker.isModalInPresentation = true
             }
-
-            if let takePhotoIcon = options["takePhotoIcon"] {
-                if (!takePhotoIcon.isEmpty) {
-                    vc.takePhotoIcon = UIImage(named: takePhotoIcon)
-                }
-            }
+            
+            imagePicker.settings.selection.max = maxImages
 
             if let backgroundColor = options["backgroundColor"] {
                 if (!backgroundColor.isEmpty) {
-                    vc.backgroundColor = hexStringToUIColor(hex: backgroundColor)
+                    imagePicker.settings.theme.backgroundColor = hexStringToUIColor(hex: backgroundColor)
                 }
             }
 
             if let selectionFillColor = options["selectionFillColor"] {
                 if (!selectionFillColor.isEmpty) {
-                    vc.selectionFillColor = hexStringToUIColor(hex: selectionFillColor)
+                    imagePicker.settings.theme.selectionFillColor = hexStringToUIColor(hex: selectionFillColor)
                 }
             }
 
             if let selectionShadowColor = options["selectionShadowColor"] {
                 if (!selectionShadowColor.isEmpty) {
-                    vc.selectionShadowColor = hexStringToUIColor(hex: selectionShadowColor)
+                    imagePicker.settings.theme.selectionShadowColor = hexStringToUIColor(hex: selectionShadowColor)
                 }
             }
 
             if let selectionStrokeColor = options["selectionStrokeColor"] {
                 if (!selectionStrokeColor.isEmpty) {
-                    vc.selectionStrokeColor = hexStringToUIColor(hex: selectionStrokeColor)
+                    imagePicker.settings.theme.selectionStrokeColor = hexStringToUIColor(hex: selectionStrokeColor)
                 }
             }
-
-            if let selectionTextColor = options["selectionTextColor"] {
-                if (!selectionTextColor.isEmpty) {
-                    vc.selectionTextAttributes[NSAttributedString.Key.foregroundColor] = hexStringToUIColor(hex: selectionTextColor)
-                }
-            }
-
-            if let selectionCharacter = options["selectionCharacter"] {
-                if (!selectionCharacter.isEmpty) {
-                    vc.selectionCharacter = Character(selectionCharacter)
-                }
-            }
-
-            controller!.bs_presentImagePickerController(vc, animated: true,
-                select: { (asset: PHAsset) -> Void in
+            
+            UIViewController.topViewController()?.presentImagePicker(imagePicker, animated: true,
+                select: { [weak imagePicker](asset: PHAsset) -> Void in
                     totalImagesSelected += 1
                     
                     if let autoCloseOnSelectionLimit = options["autoCloseOnSelectionLimit"] {
                         if (!autoCloseOnSelectionLimit.isEmpty && autoCloseOnSelectionLimit == "true") {
                             if (maxImages == totalImagesSelected) {
-                                UIApplication.shared.sendAction(vc.doneButton.action!, to: vc.doneButton.target, from: self, for: nil)
+                                guard let wVC = imagePicker else {
+                                    return
+                                }
+                                UIApplication.shared.sendAction(wVC.doneButton.action!, to: wVC.doneButton.target, from: self, for: nil)
                             }
                         }
                     }
@@ -161,7 +158,7 @@ public class SwiftMultiImagePickerPlugin: NSObject, FlutterPlugin {
             let width = arguments["width"] as! Int
             let height = arguments["height"] as! Int
             let quality = arguments["quality"] as! Int
-
+            let compressionQuality = Float(quality) / Float(100)
             let manager = PHImageManager.default()
             let options = PHImageRequestOptions()
 
@@ -183,7 +180,7 @@ public class SwiftMultiImagePickerPlugin: NSObject, FlutterPlugin {
                     options: options,
                     resultHandler: {
                         (image: UIImage?, info) in
-                        self.messenger.send(onChannel: "multi_image_picker/image/" + identifier + ".thumb", message: image?.jpegData(compressionQuality: CGFloat(quality / 100)))
+                        self.messenger.send(onChannel: "multi_image_picker/image/" + identifier + ".thumb", message: image?.jpegData(compressionQuality: CGFloat(compressionQuality)))
                         })
 
                 if(PHInvalidImageRequestID != ID) {
@@ -196,6 +193,7 @@ public class SwiftMultiImagePickerPlugin: NSObject, FlutterPlugin {
             let arguments = call.arguments as! Dictionary<String, AnyObject>
             let identifier = arguments["identifier"] as! String
             let quality = arguments["quality"] as! Int
+            let compressionQuality = Float(quality) / Float(100)
             let manager = PHImageManager.default()
             let options = PHImageRequestOptions()
 
@@ -216,7 +214,7 @@ public class SwiftMultiImagePickerPlugin: NSObject, FlutterPlugin {
                     options: options,
                     resultHandler: {
                         (image: UIImage?, info) in
-                        self.messenger.send(onChannel: "multi_image_picker/image/" + identifier + ".original", message: image!.jpegData(compressionQuality: CGFloat(quality / 100)))
+                        self.messenger.send(onChannel: "multi_image_picker/image/" + identifier + ".original", message: image!.jpegData(compressionQuality: CGFloat(compressionQuality)))
                 })
 
                 if(PHInvalidImageRequestID != ID) {
