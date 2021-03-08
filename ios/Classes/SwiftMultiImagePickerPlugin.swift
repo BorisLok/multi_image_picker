@@ -61,27 +61,18 @@ public class SwiftMultiImagePickerPlugin: NSObject, FlutterPlugin {
                 return result(FlutterError(code: "PERMISSION_PERMANENTLY_DENIED", message: "The user has denied the gallery access.", details: nil))
             }
             
-            let vc = BSImagePickerViewController()
             
-            if #available(iOS 13.0, *) {
-                // Disables iOS 13 swipe to dismiss - to force user to press cancel or done.
-                vc.isModalInPresentation = true
-            }
             let arguments = call.arguments as! Dictionary<String, AnyObject>
             let maxImages = arguments["maxImages"] as! Int
-            let enableCamera = arguments["enableCamera"] as! Bool
             let options = arguments["iosOptions"] as! Dictionary<String, String>
-            let selectedAssets = arguments["selectedAssets"] as! Array<String>
+            let selectedAssetIds = arguments["selectedAssets"] as! Array<String>
             var totalImagesSelected = 0
             
-            vc.maxNumberOfSelections = maxImages
-
-            if (enableCamera) {
-                vc.takePhotos = true
-            }
             
-            if selectedAssets.count > 0 {
-
+            var selectedAssets = [PHAsset]()
+            
+        
+            if selectedAssetIds.count > 0 {
                 let options = PHFetchOptions()
                  if #available(iOS 9.1, *) {
                     let imagesPredicate = NSPredicate(format: "mediaType = %d", PHAssetMediaType.image.rawValue)
@@ -90,62 +81,54 @@ public class SwiftMultiImagePickerPlugin: NSObject, FlutterPlugin {
                     options.predicate = compound
                 }
 
-                let assets: PHFetchResult = PHAsset.fetchAssets(withLocalIdentifiers: selectedAssets, options: options)
-                
-                vc.defaultSelections = assets
+                let assets: PHFetchResult = PHAsset.fetchAssets(withLocalIdentifiers: selectedAssetIds, options: options)
+                assets.enumerateObjects({ (asset, idx, stop) -> Void in
+                    selectedAssets.append(asset)
+                })
             }
-
-            if let takePhotoIcon = options["takePhotoIcon"] {
-                if (!takePhotoIcon.isEmpty) {
-                    vc.takePhotoIcon = UIImage(named: takePhotoIcon)
-                }
+            
+            
+            let imagePicker = ImagePickerController(selectedAssets: selectedAssets)
+            
+            if #available(iOS 13.0, *) {
+                // Disables iOS 13 swipe to dismiss - to force user to press cancel or done.
+                imagePicker.isModalInPresentation = true
             }
+            
+            imagePicker.settings.selection.max = maxImages
 
             if let backgroundColor = options["backgroundColor"] {
                 if (!backgroundColor.isEmpty) {
-                    vc.backgroundColor = hexStringToUIColor(hex: backgroundColor)
+                    imagePicker.settings.theme.backgroundColor = hexStringToUIColor(hex: backgroundColor)
                 }
             }
 
             if let selectionFillColor = options["selectionFillColor"] {
                 if (!selectionFillColor.isEmpty) {
-                    vc.selectionFillColor = hexStringToUIColor(hex: selectionFillColor)
+                    imagePicker.settings.theme.selectionFillColor = hexStringToUIColor(hex: selectionFillColor)
                 }
             }
 
             if let selectionShadowColor = options["selectionShadowColor"] {
                 if (!selectionShadowColor.isEmpty) {
-                    vc.selectionShadowColor = hexStringToUIColor(hex: selectionShadowColor)
+                    imagePicker.settings.theme.selectionShadowColor = hexStringToUIColor(hex: selectionShadowColor)
                 }
             }
 
             if let selectionStrokeColor = options["selectionStrokeColor"] {
                 if (!selectionStrokeColor.isEmpty) {
-                    vc.selectionStrokeColor = hexStringToUIColor(hex: selectionStrokeColor)
+                    imagePicker.settings.theme.selectionStrokeColor = hexStringToUIColor(hex: selectionStrokeColor)
                 }
             }
-
-            if let selectionTextColor = options["selectionTextColor"] {
-                if (!selectionTextColor.isEmpty) {
-                    vc.selectionTextAttributes[NSAttributedString.Key.foregroundColor] = hexStringToUIColor(hex: selectionTextColor)
-                }
-            }
-
-            if let selectionCharacter = options["selectionCharacter"] {
-                if (!selectionCharacter.isEmpty) {
-                    vc.selectionCharacter = Character(selectionCharacter)
-                }
-            }
-
-            UIViewController.topViewController()?.bs_presentImagePickerController(vc, animated: true,
-                select: { [weak vc](asset: PHAsset) -> Void in
+            
+            UIViewController.topViewController()?.presentImagePicker(imagePicker, animated: true,
+                select: { [weak imagePicker](asset: PHAsset) -> Void in
                     totalImagesSelected += 1
                     
-
                     if let autoCloseOnSelectionLimit = options["autoCloseOnSelectionLimit"] {
                         if (!autoCloseOnSelectionLimit.isEmpty && autoCloseOnSelectionLimit == "true") {
                             if (maxImages == totalImagesSelected) {
-                                guard let wVC = vc else {
+                                guard let wVC = imagePicker else {
                                     return
                                 }
                                 UIApplication.shared.sendAction(wVC.doneButton.action!, to: wVC.doneButton.target, from: self, for: nil)
